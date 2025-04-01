@@ -639,4 +639,189 @@
         resale-price: (some price)
       })
     )
+      ;; Increment listing ID
+    (var-set next-listing-id (+ listing-id u1))
     
+    (ok listing-id)
+  )
+)
+
+;; Remove a ticket listing
+(define-public (cancel-listing (listing-id uint))
+  (let
+    (
+      (listing (unwrap! (get-ticket-listing listing-id) (err ERR-NOT-LISTED)))
+      (ticket-id (get ticket-id listing))
+      (ticket (unwrap! (get-ticket ticket-id) (err ERR-TICKET-NOT-FOUND)))
+    )
+    
+    ;; Check if caller is the seller
+    (asserts! (is-eq tx-sender (get seller listing)) (err ERR-NOT-AUTHORIZED))
+    
+    ;; Check if ticket is listed
+    (asserts! (is-eq (get status ticket) TICKET-STATUS-LISTED) (err ERR-NOT-LISTED))
+    
+    ;; Update ticket status
+    (map-set tickets
+      { ticket-id: ticket-id }
+      (merge ticket {
+        status: TICKET-STATUS-VALID,
+        resale-price: none
+      })
+    )
+    
+    ;; Remove listing
+    (map-delete ticket-listings { listing-id: listing-id })
+    (map-delete ticket-to-listing { ticket-id: ticket-id })
+    
+    (ok true)
+  )
+)
+
+;; Buy a ticket from secondary market
+(define-public (buy-secondary-ticket (listing-id uint))
+  (let
+    (
+      (listing (unwrap! (get-ticket-listing listing-id) (err ERR-NOT-LISTED)))
+      (ticket-id (get ticket-id listing))
+      (ticket (unwrap! (get-ticket ticket-id) (err ERR-TICKET-NOT-FOUND)))
+      (event-id (get event-id ticket))
+      (event (unwrap! (get-event event-id) (err ERR-EVENT-NOT-FOUND)))
+      (price (get price listing))
+      (seller (get seller listing))
+      (platform-fee (/ (* price (var-get platform-fee-percentage)) u10000))
+      (seller-payment (- price platform-fee))
+    )
+    
+    ;; Check if ticket is listed and valid
+    (asserts! (is-eq (get status ticket) TICKET-STATUS-LISTED) (err ERR-NOT-LISTED))
+    
+    ;; Check if listing has expired
+    (match (get expires-at listing)
+      expiry (asserts! (< block-height expiry) (err ERR-NOT-LISTED))
+      true
+    )
+    
+    ;; Check if event is still active
+    (asserts! (is-eq (get status event) EVENT-STATUS-ACTIVE) (err ERR-EVENT-NOT-ACTIVE))
+    (asserts! (> (get start-date event) block-height) (err ERR-EVENT-ENDED))
+    
+    ;; Check if identity verification is required
+    (when (get identity-verification-required event)
+      (asserts! (is-identity-verified tx-sender) (err ERR-IDENTITY-VERIFICATION-FAILED))
+    )
+    
+    ;; Check purchase limits
+    (let
+      (
+        (current-count (get count (get-user-ticket-count event-id tx-sender)))
+      )
+      (asserts! (< current-count (get max-tickets-per-buyer event)) (err ERR-PURCHASE-LIMIT-EXCEEDED))
+    )
+    
+    ;; Transfer payment
+    (try! (stx-transfer? price tx-sender seller))
+    (try! (stx-transfer? platform-fee tx-sender (var-get contract-owner)))
+    
+    ;; Update ticket
+    (map-set tickets
+      { ticket-id: ticket-id }
+      (merge ticket {
+        owner: tx-sender,
+        status: TICKET-STATUS-VALID,
+        resale-price: none,
+        metadata-hash: (sha256 (concat (concat (unwrap-panic (to-consensus-buff? ticket-id)) 
+                                            (unwrap-panic (to-consensus-buff? event-id)))
+                                  (unwrap-panic (to-consensus-buff? tx-sender))))
+      })
+    )
+    
+    ;; Update user ticket counts
+    (let
+      (
+        (buyer-count (get count (get-user-ticket-count event-id tx-sender)))
+        (seller-count (get count (get-user-ticket-count event-id seller)))
+      )
+      (map-set user-event-tickets
+        { event-id: event-id, user: tx-sender }
+        { count: (+ buyer-count u1) }
+      )
+      
+      (map-set user-event-tickets
+        { event-id: event-id, user: seller }
+        { count: (- seller-count u1) }
+      )
+    )
+    
+    ;; Remove listing
+    (map-delete ticket-listings { listing-id: listing-id })
+    (map-delete ticket-to-listing { ticket-id: ticket-id })
+    
+    (ok ticket-id)
+  )
+)
+
+;; Record ticket attendance
+(define-public (record-attendance (ticket-id uint) (verification-code (buff 32)))
+  (let
+    (
+      (ticket (unwrap! (get-ticket ticket-id) (err ERR-TICKET-NOT-FOUND)))
+      (event-id (get event-id ticket))
+      (event (unwrap! (get-event event-id) (err ERR-EVENT-NOT-FOUND)))
+    )
+    
+    ;; Check if event is active and happening now
+    (asserts! (is-eq (get status event) EVENT-STATUS-ACTIVE) (err ERR-EVENT-NOT-ACTIVE))
+    (asserts! (>= block-height (get start-date event)) (err ERR-INVALID-PARAMETERS))
+    (asserts! (<= block-height (get end-date event)) (err ERR-EVENT-ENDED))
+    
+    ;; Check if ticket is valid
+    (asserts! (is-eq (get status ticket) TICKET-STATUS-VALID) (err ERR-TICKET-NOT-FOUND))
+    
+    ;; Check if ticket hasn't been used
+    (asserts! (not (get attended ticket)) (err ERR-TICKET-ALREADY-USED))
+    
+    ;; Verify the attendance code (only event organizer can verify attendance)
+    (asserts! (is-eq tx-sender (get organizer event)) (err ERR-NOT-AUTHORIZED))
+    (asserts! (is-eq verification-code (get verification-code ticket)) (err ERR-IDENTITY-VERIFICATION-FAILED))
+    
+    ;; Update ticket attendance status
+    (map-set tickets
+      { ticket-id: ticket-id }
+      (merge ticket {
+        attended: true,
+        attendance-time: (some block-height)
+      })
+    )
+    
+    (ok true)
+  )
+)
+
+;; Request a refund for a ticket
+(define-public (request-refund (ticket-id uint))
+  (let
+    (
+      (ticket (unwrap! (get-ticket ticket-id) (err ERR-TICKET-NOT-FOUND)))
+      (event-id (get event-id ticket))
+      (event (unwrap! (get-event event-id) (err ERR-EVENT-NOT-FOUND)))
+      (ticket-class (unwrap! (get-ticket-class (get ticket-class-id ticket)) (err ERR-TICKET-CLASS-NOT-FOUND)))
+      (refund-cutoff-time (- (get start-date event) (* (get refund-window-hours event) u6))) ;; Assuming 6 blocks per hour
+    )
+    
+    ;; Check if caller owns the ticket
+    (asserts! (is-eq tx-sender (get owner ticket)) (err ERR-TICKET-NOT-OWNED))
+    
+    ;; Check if ticket is valid (not used or already refunded)
+    (asserts! (is-eq (get status ticket) TICKET-STATUS-VALID) (err ERR-INVALID-PARAMETERS))
+    
+    ;; Check if event hasn't been canceled
+    (asserts! (not (is-eq (get status event) EVENT-STATUS-CANCELED)) (err ERR-EVENT-CANCELED))
+    
+    ;; Check if still within refund window
+    (asserts! (< block-height refund-cutoff-time) (err ERR-REFUND-WINDOW-EXPIRED))
+    
+    ;; Calculate refund amount (may include a refund fee in a real implementation)
+    (let
+      (
+        (refund-amount (get p
