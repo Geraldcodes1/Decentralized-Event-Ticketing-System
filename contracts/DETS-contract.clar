@@ -59,3 +59,144 @@
     joined-at: uint
   }
 )
+;; Events
+(define-map events
+  { event-id: uint }
+  {
+    name: (string-utf8 100),
+    description: (string-utf8 1000),
+    venue: (string-utf8 200),
+    organizer: principal,
+    start-date: uint, ;; Block height or Unix timestamp
+    end-date: uint,
+    status: uint,
+    refund-policy: (string-utf8 500),
+    refund-window-hours: uint, ;; Hours before event when refunds are still allowed
+    identity-verification-required: bool,
+    max-tickets-per-buyer: uint,
+    sales-start-date: uint,
+    sales-end-date: uint,
+    image-url: (string-utf8 200),
+    created-at: uint,
+    total-ticket-count: uint,
+    tickets-sold: uint,
+    tickets-available: uint
+  }
+)
+
+;; Ticket classes (e.g., VIP, General Admission)
+(define-map ticket-classes
+  { ticket-class-id: uint }
+  {
+    event-id: uint,
+    name: (string-utf8 100),
+    description: (string-utf8 500),
+    base-price: uint, ;; In STX
+    total-supply: uint,
+    remaining-supply: uint,
+    resalable: bool,
+    price-model: uint,
+    max-resale-price-percentage: uint, ;; Basis points
+    dynamic-pricing-params: (list 3 uint) ;; Parameters for dynamic pricing models
+  }
+)
+
+;; Tickets
+(define-map tickets
+  { ticket-id: uint }
+  {
+    event-id: uint,
+    ticket-class-id: uint,
+    owner: principal,
+    purchase-price: uint,
+    purchase-date: uint,
+    status: uint,
+    attended: bool,
+    attendance-time: (optional uint),
+    verification-code: (buff 32), ;; Hash of secret code for attendance
+    resale-price: (optional uint),
+    original-owner: principal,
+    metadata-hash: (buff 32) ;; Hash of all ticket details + owner identity for verification
+  }
+)
+
+;; Map for event ticket counts by user
+(define-map user-event-tickets
+  { event-id: uint, user: principal }
+  { count: uint }
+)
+
+;; Secondary market listings
+(define-map ticket-listings
+  { listing-id: uint }
+  {
+    ticket-id: uint,
+    seller: principal,
+    price: uint,
+    listed-at: uint,
+    expires-at: (optional uint)
+  }
+)
+
+;; Map ticket ID to listing ID
+(define-map ticket-to-listing
+  { ticket-id: uint }
+  { listing-id: uint }
+)
+
+;; User identity verification
+(define-map user-identity-verification
+  { user: principal }
+  {
+    verified: bool,
+    verification-method: (string-utf8 100),
+    verification-date: uint,
+    verification-hash: (buff 32) ;; Hash of identity documents
+  }
+)
+
+;; Waitlists for popular events
+(define-map event-waitlists
+  { event-id: uint, user: principal }
+  {
+    position: uint,
+    requested-at: uint,
+    ticket-class-id: uint
+  }
+)
+
+;; Waitlist counters
+(define-map waitlist-counters
+  { event-id: uint }
+  { count: uint }
+)
+
+;; Read-only functions
+
+;; Get event details
+(define-read-only (get-event (event-id uint))
+  (map-get? events { event-id: event-id })
+)
+
+;; Get ticket class details
+(define-read-only (get-ticket-class (ticket-class-id uint))
+  (map-get? ticket-classes { ticket-class-id: ticket-class-id })
+)
+
+;; Get ticket details
+(define-read-only (get-ticket (ticket-id uint))
+  (map-get? tickets { ticket-id: ticket-id })
+)
+
+;; Get ticket listing
+(define-read-only (get-ticket-listing (listing-id uint))
+  (map-get? ticket-listings { listing-id: listing-id })
+)
+
+;; Get listing by ticket
+(define-read-only (get-listing-by-ticket (ticket-id uint))
+  (match (map-get? ticket-to-listing { ticket-id: ticket-id })
+    listing-map (map-get? ticket-listings { listing-id: (get listing-id listing-map) })
+    none
+  )
+)
