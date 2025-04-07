@@ -233,4 +233,85 @@ function addTicketClass(chain, deployer, eventId, name, price, supply) {
     );
     
     const verificationCode = ticketVerificationData.result.value['verification-code'].value;
-    
+       // Record attendance (by organizer)
+       block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'record-attendance',
+          [
+            types.uint(ticketId),
+            types.buff(verificationCode)
+          ],
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Verify attendance was recorded
+      ticketResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-ticket',
+        [types.uint(ticketId)],
+        deployer.address
+      );
+      assertEquals(ticketResult.result.value['attended'].value, true);
+      
+      // Test 11: Create a second event
+      const eventId2 = createEvent(chain, deployer, 'Second Event', startDate + 200, endDate + 200);
+      
+      // Test 12: Cancel event
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'cancel-event',
+          [types.uint(eventId2)],
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Verify event was canceled
+      eventResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-event',
+        [types.uint(eventId2)],
+        deployer.address
+      );
+      assertEquals(eventResult.result.value['status'].value, '2'); // EVENT-STATUS-CANCELED
+      
+      // Test 13: Attempt to buy ticket for canceled event (should fail)
+      const ticketClassId2 = addTicketClass(chain, deployer, eventId2, 'VIP', 200000000, 50);
+      
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'buy-ticket',
+          [types.uint(ticketClassId2)],
+          user1.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result.includes('err'), true);
+      
+      // Test 14: Update platform fee percentage (only owner can do this)
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'update-platform-fee',
+          [types.uint(300)], // 3%
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Test 15: Join waitlist for an event
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'join-waitlist',
+          [
+            types.uint(eventId),
+            types.uint(ticketClassId)
+          ],
+          user3.address
+        )
+      ]);
