@@ -30,3 +30,82 @@ function createEvent(chain, deployer, name, startDate, endDate) {
   ]);
   return parseInt(block.receipts[0].result.substr(1));
 }
+// Helper function to add a ticket class
+function addTicketClass(chain, deployer, eventId, name, price, supply) {
+    const block = chain.mineBlock([
+      Tx.contractCall(
+        'event-ticketing',
+        'add-ticket-class',
+        [
+          types.uint(eventId), // event-id
+          types.utf8(name), // name
+          types.utf8('Standard ticket'), // description
+          types.uint(price), // base-price
+          types.uint(supply), // total-supply
+          types.bool(true), // resalable
+          types.uint(1), // price-model (PRICE-MODEL-FIXED)
+          types.uint(11000), // max-resale-price-percentage (110%)
+          types.list([types.uint(10), types.uint(20), types.uint(30)]) // dynamic-pricing-params
+        ],
+        deployer.address
+      )
+    ]);
+    return parseInt(block.receipts[0].result.substr(1));
+  }
+  
+  // Main test suite
+  Clarinet.test({
+    name: "Event Ticketing System Test Suite",
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+      const deployer = accounts.get('deployer')!;
+      const user1 = accounts.get('wallet_1')!;
+      const user2 = accounts.get('wallet_2')!;
+      const user3 = accounts.get('wallet_3')!;
+      
+      // Test 1: Register as event organizer
+      let block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'register-organizer',
+          [types.utf8('Test Organizer')],
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Test 2: Create an event
+      const startDate = chain.blockHeight + 100;
+      const endDate = startDate + 10;
+      const eventId = createEvent(chain, deployer, 'Test Concert', startDate, endDate);
+      
+      // Verify event was created
+      let eventResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-event',
+        [types.uint(eventId)],
+        deployer.address
+      );
+      assertEquals(eventResult.result.value['name'].value, 'Test Concert');
+      
+      // Test 3: Add ticket class to the event
+      const ticketClassId = addTicketClass(chain, deployer, eventId, 'General Admission', 100000000, 100);
+      
+      // Verify ticket class was created
+      let ticketClassResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-ticket-class',
+        [types.uint(ticketClassId)],
+        deployer.address
+      );
+      assertEquals(ticketClassResult.result.value['name'].value, 'General Admission');
+      assertEquals(ticketClassResult.result.value['base-price'].value, '100000000');
+      
+      // Test 4: Buy a ticket
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'buy-ticket',
+          [types.uint(ticketClassId)],
+          user1.address
+        )
+      ]);
