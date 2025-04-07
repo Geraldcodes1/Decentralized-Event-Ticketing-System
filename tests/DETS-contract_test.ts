@@ -109,3 +109,39 @@ function addTicketClass(chain, deployer, eventId, name, price, supply) {
           user1.address
         )
       ]);
+      const ticketId = parseInt(block.receipts[0].result.substr(1));
+    
+      // Verify ticket was purchased
+      let ticketResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-ticket',
+        [types.uint(ticketId)],
+        user1.address
+      );
+      assertEquals(ticketResult.result.value['owner'].value, user1.address);
+      assertEquals(ticketResult.result.value['status'].value, '1'); // TICKET-STATUS-VALID
+      
+      // Test 5: List a ticket for resale
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'list-ticket-for-resale',
+          [
+            types.uint(ticketId),
+            types.uint(105000000), // 5% markup
+            types.none() // no expiry
+          ],
+          user1.address
+        )
+      ]);
+      const listingId = parseInt(block.receipts[0].result.substr(1));
+      
+      // Verify listing was created
+      let listingResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-ticket-listing',
+        [types.uint(listingId)],
+        user1.address
+      );
+      assertEquals(listingResult.result.value['seller'].value, user1.address);
+      assertEquals(listingResult.result.value['price'].value, '105000000');
