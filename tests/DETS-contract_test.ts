@@ -176,4 +176,61 @@ function addTicketClass(chain, deployer, eventId, name, price, supply) {
         )
       ]);
       const ticketId2 = parseInt(block.receipts[0].result.substr(1));
-      
+         // Test 8: Verify user identity for attendance
+    const verificationHash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+    block = chain.mineBlock([
+      Tx.contractCall(
+        'event-ticketing',
+        'verify-user-identity',
+        [types.buff(verificationHash)],
+        user3.address
+      )
+    ]);
+    assertEquals(block.receipts[0].result, '(ok true)');
+    
+    // Verify identity was recorded
+    let verificationResult = chain.callReadOnlyFn(
+      'event-ticketing',
+      'is-identity-verified',
+      [types.principal(user3.address)],
+      deployer.address
+    );
+    assertEquals(verificationResult.result, 'true');
+    
+    // Test 9: Request a refund
+    // First, advance to within refund window
+    chain.mineEmptyBlockUntil(startDate - 30);
+    
+    block = chain.mineBlock([
+      Tx.contractCall(
+        'event-ticketing',
+        'request-refund',
+        [types.uint(ticketId2)],
+        user3.address
+      )
+    ]);
+    // Expected result is ok with refund amount
+    assertEquals(block.receipts[0].result.includes('ok u'), true);
+    
+    // Verify ticket was refunded
+    ticketResult = chain.callReadOnlyFn(
+      'event-ticketing',
+      'get-ticket',
+      [types.uint(ticketId2)],
+      user3.address
+    );
+    assertEquals(ticketResult.result.value['status'].value, '3'); // TICKET-STATUS-REFUNDED
+    
+    // Test 10: Advance to event time and record attendance
+    chain.mineEmptyBlockUntil(startDate + 1);
+    
+    // Get verification code from ticket
+    let ticketVerificationData = chain.callReadOnlyFn(
+      'event-ticketing',
+      'generate-ticket-verification-data',
+      [types.uint(ticketId)],
+      deployer.address
+    );
+    
+    const verificationCode = ticketVerificationData.result.value['verification-code'].value;
+    
