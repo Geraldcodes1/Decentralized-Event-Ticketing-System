@@ -185,7 +185,7 @@ To run the tests:
 
 ## License
 
-[License information placeholder]
+MIT LINCENSE
 
 ## Contributing
 
