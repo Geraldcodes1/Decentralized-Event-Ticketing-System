@@ -315,3 +315,70 @@ function addTicketClass(chain, deployer, eventId, name, price, supply) {
           user3.address
         )
       ]);
+      assertEquals(block.receipts[0].result.includes('ok u'), true);
+    
+      // Additional negative test cases
+      
+      // Test 16: Attempt to record attendance for a non-existent ticket
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'record-attendance',
+          [
+            types.uint(999),
+            types.buff('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef')
+          ],
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, `(err u${3})`); // ERR-TICKET-NOT-FOUND
+      
+      // Test 17: Attempt to refund a used ticket
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'request-refund',
+          [types.uint(ticketId)],
+          user2.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result.includes('err'), true);
+      
+      // Test 18: Attempt to list a ticket that's not owned
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'list-ticket-for-resale',
+          [
+            types.uint(ticketId),
+            types.uint(105000000),
+            types.none()
+          ],
+          user1.address // No longer the owner
+        )
+      ]);
+      assertEquals(block.receipts[0].result, `(err u${10})`); // ERR-TICKET-NOT-OWNED
+      
+      // Test 19: Transfer contract ownership
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'transfer-ownership',
+          [types.principal(user1.address)],
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Test 20: Check if can-refund function works correctly
+      let canRefund = chain.callReadOnlyFn(
+        'event-ticketing',
+        'can-refund',
+        [types.uint(ticketId)],
+        deployer.address
+      );
+      assertEquals(canRefund.result, 'false'); // Should be false because ticket is used
+      
+      console.log('All tests completed successfully');
+    },
+  });
