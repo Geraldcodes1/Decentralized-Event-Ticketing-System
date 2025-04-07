@@ -145,3 +145,173 @@ function addTicketClass(chain, deployer, eventId, name, price, supply) {
       );
       assertEquals(listingResult.result.value['seller'].value, user1.address);
       assertEquals(listingResult.result.value['price'].value, '105000000');
+        // Test 6: Buy a ticket from secondary market
+    block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'buy-secondary-ticket',
+          [types.uint(listingId)],
+          user2.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, `(ok ${ticketId})`);
+      
+      // Verify ticket ownership transferred
+      ticketResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-ticket',
+        [types.uint(ticketId)],
+        user2.address
+      );
+      assertEquals(ticketResult.result.value['owner'].value, user2.address);
+      assertEquals(ticketResult.result.value['status'].value, '1'); // TICKET-STATUS-VALID
+      
+      // Test 7: Buy another ticket directly for user3
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'buy-ticket',
+          [types.uint(ticketClassId)],
+          user3.address
+        )
+      ]);
+      const ticketId2 = parseInt(block.receipts[0].result.substr(1));
+         // Test 8: Verify user identity for attendance
+    const verificationHash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+    block = chain.mineBlock([
+      Tx.contractCall(
+        'event-ticketing',
+        'verify-user-identity',
+        [types.buff(verificationHash)],
+        user3.address
+      )
+    ]);
+    assertEquals(block.receipts[0].result, '(ok true)');
+    
+    // Verify identity was recorded
+    let verificationResult = chain.callReadOnlyFn(
+      'event-ticketing',
+      'is-identity-verified',
+      [types.principal(user3.address)],
+      deployer.address
+    );
+    assertEquals(verificationResult.result, 'true');
+    
+    // Test 9: Request a refund
+    // First, advance to within refund window
+    chain.mineEmptyBlockUntil(startDate - 30);
+    
+    block = chain.mineBlock([
+      Tx.contractCall(
+        'event-ticketing',
+        'request-refund',
+        [types.uint(ticketId2)],
+        user3.address
+      )
+    ]);
+    // Expected result is ok with refund amount
+    assertEquals(block.receipts[0].result.includes('ok u'), true);
+    
+    // Verify ticket was refunded
+    ticketResult = chain.callReadOnlyFn(
+      'event-ticketing',
+      'get-ticket',
+      [types.uint(ticketId2)],
+      user3.address
+    );
+    assertEquals(ticketResult.result.value['status'].value, '3'); // TICKET-STATUS-REFUNDED
+    
+    // Test 10: Advance to event time and record attendance
+    chain.mineEmptyBlockUntil(startDate + 1);
+    
+    // Get verification code from ticket
+    let ticketVerificationData = chain.callReadOnlyFn(
+      'event-ticketing',
+      'generate-ticket-verification-data',
+      [types.uint(ticketId)],
+      deployer.address
+    );
+    
+    const verificationCode = ticketVerificationData.result.value['verification-code'].value;
+       // Record attendance (by organizer)
+       block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'record-attendance',
+          [
+            types.uint(ticketId),
+            types.buff(verificationCode)
+          ],
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Verify attendance was recorded
+      ticketResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-ticket',
+        [types.uint(ticketId)],
+        deployer.address
+      );
+      assertEquals(ticketResult.result.value['attended'].value, true);
+      
+      // Test 11: Create a second event
+      const eventId2 = createEvent(chain, deployer, 'Second Event', startDate + 200, endDate + 200);
+      
+      // Test 12: Cancel event
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'cancel-event',
+          [types.uint(eventId2)],
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Verify event was canceled
+      eventResult = chain.callReadOnlyFn(
+        'event-ticketing',
+        'get-event',
+        [types.uint(eventId2)],
+        deployer.address
+      );
+      assertEquals(eventResult.result.value['status'].value, '2'); // EVENT-STATUS-CANCELED
+      
+      // Test 13: Attempt to buy ticket for canceled event (should fail)
+      const ticketClassId2 = addTicketClass(chain, deployer, eventId2, 'VIP', 200000000, 50);
+      
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'buy-ticket',
+          [types.uint(ticketClassId2)],
+          user1.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result.includes('err'), true);
+      
+      // Test 14: Update platform fee percentage (only owner can do this)
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'update-platform-fee',
+          [types.uint(300)], // 3%
+          deployer.address
+        )
+      ]);
+      assertEquals(block.receipts[0].result, '(ok true)');
+      
+      // Test 15: Join waitlist for an event
+      block = chain.mineBlock([
+        Tx.contractCall(
+          'event-ticketing',
+          'join-waitlist',
+          [
+            types.uint(eventId),
+            types.uint(ticketClassId)
+          ],
+          user3.address
+        )
+      ]);
